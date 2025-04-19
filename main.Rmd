@@ -1,0 +1,390 @@
+---
+title: "kNN Breast cancer Analysis"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+wbcd <- read_csv("wisc_bc_data.csv")
+wbcd$diagnosis <- factor(wbcd$diagnosis,
+                         levels = c("B", "M"),
+                         labels = c("Benign", "Malignant"))
+wbcd %>% group_by(diagnosis) %>% tally() %>% mutate(perc = n/sum(n)*100)#dplyr
+summary(wbcd[c("radius_mean", "area_mean", "smoothness_mean")])
+normalise <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+normalise(c(1,2,3,4,5))
+normalise(c(10,20,30,40,50))
+
+numeric_cols <- sapply(wbcd, is.numeric)
+wbcd_n <- as.data.frame(lapply(wbcd[numeric_cols], normalise))
+summary(wbcd_n$area_mean)
+
+wbcd_n$diagnosis <- wbcd$diagnosis
+```
+
+```{r}
+library(caret)
+set.seed(111)
+in_train_n <- createDataPartition(wbcd_n$diagnosis,
+                                  p = 0.7,
+                                  list = FALSE)
+wbcd_n_train <- wbcd_n[in_train_n, ]
+wbcd_n_test <- wbcd_n[-in_train_n, ]
+```
+
+```{r}
+library(class)
+wbcd_test_n_pred <- class::knn(
+  train = wbcd_n_train[ ,!names(wbcd_n_train) %in% c("diagnosis")],
+  test = wbcd_n_test[ , !names(wbcd_n_test) %in% c("diagnosis")],
+  cl = wbcd_n_train$diagnosis,
+  k=21)
+```
+
+```{r}
+library(gmodels)
+CrossTable(x = wbcd_n_test$diagnosis, y = wbcd_test_n_pred, prop.chisq=FALSE)
+
+wbcd_z <- as.data.frame(scale(wbcd[numeric_cols]))
+
+summary(wbcd_z$area_mean)
+```
+
+```{r}
+library(caret)
+library(class)
+library(gmodels)
+set.seed(111)
+wbcd_z$diagnosis <- wbcd$diagnosis
+in_train_z <- createDataPartition(wbcd_z$diagnosis, p = 0.70, list = FALSE)
+wbcd_z_train <- wbcd_z[in_train_z, ]
+wbcd_z_test <- wbcd_z[-in_train_z, ]
+wbcd_z_test_pred <- class::knn(train = wbcd_z_train[ , !names(wbcd_z_train) %in% c("diagnosis")], 
+                               test = wbcd_z_test[ , !names(wbcd_z_test) %in% c("diagnosis")], 
+                               cl = wbcd_z_train$diagnosis, 
+                               k=21)
+CrossTable(x = wbcd_z_test$diagnosis, y = wbcd_z_test_pred, prop.chisq=FALSE)
+```
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(GGally)  # For ggpairs function
+
+# Read the dataset
+wbcd <- read.csv("wisc_bc_data.csv")
+
+# Convert diagnosis to factor
+wbcd$diagnosis <- factor(wbcd$diagnosis, 
+                        levels = c("B", "M"),
+                        labels = c("Benign", "Malignant"))
+
+# Select only the mean features
+mean_features <- wbcd %>% 
+  select(diagnosis, ends_with("_mean"))
+
+# Create a correlation plot
+ggpairs(mean_features, 
+        aes(color = diagnosis, alpha = 0.5),
+        upper = list(continuous = "cor"),
+        lower = list(continuous = "points"),
+        diag = list(continuous = "densityDiag"),
+        title = "Correlation Matrix of Mean Features")
+
+# Create a correlation matrix to examine numerically
+cor_matrix <- cor(mean_features[,-1])
+highly_correlated <- which(abs(cor_matrix) > 0.9 & abs(cor_matrix) < 1, arr.ind = TRUE)
+
+# View the pairs of highly correlated features
+highly_correlated_pairs <- data.frame(
+  feature1 = colnames(mean_features[,-1])[highly_correlated[,1]],
+  feature2 = colnames(mean_features[,-1])[highly_correlated[,2]],
+  correlation = cor_matrix[highly_correlated]
+)
+
+# Sort by absolute correlation value (descending)
+highly_correlated_pairs <- highly_correlated_pairs[order(-abs(highly_correlated_pairs$correlation)),]
+
+# Remove duplicate pairs (since correlation matrix is symmetric)
+highly_correlated_pairs <- highly_correlated_pairs[!duplicated(t(apply(highly_correlated_pairs[,1:2], 1, sort))),]
+
+print(highly_correlated_pairs)
+```
+
+```{r}
+# Load necessary libraries
+library(class)    # For kNN
+library(caret)    # For data partitioning
+library(tidyverse)
+library(pROC)     # For ROC curve
+
+# Read the dataset
+wbcd <- read.csv("wisc_bc_data.csv")
+
+# Convert diagnosis to factor
+wbcd$diagnosis <- factor(wbcd$diagnosis, 
+                        levels = c("B", "M"),
+                        labels = c("Benign", "Malignant"))
+
+# Define normalization function
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+# Select numeric features and normalize
+wbcd_numeric <- wbcd[, -1]  # Remove ID column
+numeric_cols <- sapply(wbcd_numeric, is.numeric)
+wbcd_n <- as.data.frame(lapply(wbcd_numeric[numeric_cols], normalize))
+
+# Add diagnosis back
+wbcd_n$diagnosis <- wbcd$diagnosis
+
+# Create training and test sets (70-30 split)
+set.seed(123)  # For reproducibility
+train_index <- createDataPartition(wbcd_n$diagnosis, p = 0.7, list = FALSE)
+train_data <- wbcd_n[train_index, ]
+test_data <- wbcd_n[-train_index, ]
+
+# Prepare data for kNN
+train_x <- train_data[, -which(names(train_data) == "diagnosis")]
+test_x <- test_data[, -which(names(test_data) == "diagnosis")]
+train_y <- train_data$diagnosis
+test_y <- test_data$diagnosis
+
+# Initialize results data frame
+results <- data.frame(
+  k = 1:40,
+  false_positives = NA,
+  false_negatives = NA,
+  accuracy = NA
+)
+
+# Run kNN for k from 1 to 40
+for (k in 1:40) {
+  # Run kNN
+  predictions <- knn(train = train_x, 
+                     test = test_x, 
+                     cl = train_y, 
+                     k = k)
+  
+  # Create confusion matrix
+  cm <- confusionMatrix(predictions, test_y, positive = "Malignant")
+  
+  # Extract metrics
+  # False positives: predicted Malignant when actually Benign
+  fp <- cm$table[2, 1]
+  
+  # False negatives: predicted Benign when actually Malignant
+  fn <- cm$table[1, 2]
+  
+  # Store results
+  results$false_positives[k] <- fp
+  results$false_negatives[k] <- fn
+  results$accuracy[k] <- cm$overall["Accuracy"]
+}
+
+# Calculate additional metrics
+results <- results %>%
+  mutate(
+    true_positives = nrow(test_data[test_data$diagnosis == "Malignant",]) - false_negatives,
+    true_negatives = nrow(test_data[test_data$diagnosis == "Benign",]) - false_positives,
+    sensitivity = true_positives / (true_positives + false_negatives),
+    specificity = true_negatives / (true_negatives + false_positives),
+    precision = true_positives / (true_positives + false_positives),
+    f1_score = 2 * (precision * sensitivity) / (precision + sensitivity)
+  )
+
+# Create plots
+# 1. False positives vs k
+fp_plot <- ggplot(results, aes(x = k, y = false_positives)) +
+  geom_line(color = "red", size = 1) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 21, linetype = "dashed", color = "blue") +
+  labs(title = "False Positives vs. k",
+       x = "Number of neighbors (k)",
+       y = "Number of False Positives") +
+  theme_minimal()
+
+# 2. Accuracy vs k
+acc_plot <- ggplot(results, aes(x = k, y = accuracy)) +
+  geom_line(color = "darkgreen", size = 1) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 21, linetype = "dashed", color = "blue") +
+  labs(title = "Accuracy vs. k",
+       x = "Number of neighbors (k)",
+       y = "Accuracy") +
+  theme_minimal()
+
+# 3. F1 score vs k
+f1_plot <- ggplot(results, aes(x = k, y = f1_score)) +
+  geom_line(color = "purple", size = 1) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 21, linetype = "dashed", color = "blue") +
+  labs(title = "F1 Score vs. k",
+       x = "Number of neighbors (k)",
+       y = "F1 Score") +
+  theme_minimal()
+
+# Print relevant statistics for k = 21
+print(results[21, ])
+
+# Display plots
+print(fp_plot)
+print(acc_plot)
+print(f1_plot)
+
+# Create a comprehensive summary table
+k_values <- c(1, 5, 11, 21, 31, 40)
+summary_table <- results %>%
+  filter(k %in% k_values) %>%
+  select(k, false_positives, false_negatives, accuracy, sensitivity, specificity, precision, f1_score)
+
+print(summary_table)
+```
+```{r}
+# Load necessary libraries
+library(caret)
+
+# Combine training and test data for cross-validation
+all_features <- rbind(train_x, test_x)
+all_labels <- factor(c(as.character(train_y), as.character(test_y)))
+
+# Set up train control for 10-fold cross-validation
+ctrl <- trainControl(
+  method = "cv",           # Cross-validation
+  number = 10,             # 10 folds
+  classProbs = TRUE,       # Output class probabilities
+  summaryFunction = twoClassSummary  # For binary classification metrics
+)
+
+# Set up grid of K values to try
+grid <- expand.grid(k = seq(1, 50, by = 2))  # Odd values from 1 to 50
+
+# Train model with cross-validation
+knn_model <- train(
+  x = all_features,
+  y = all_labels,
+  method = "knn",         # KNN algorithm
+  trControl = ctrl,       # Training control
+  tuneGrid = grid,        # Grid of K values
+  metric = "ROC"          # Optimize based on ROC
+)
+
+# View results
+print(knn_model)
+
+# Plot results
+plot(knn_model)
+
+# Get the best K value
+best_k <- knn_model$bestTune$k
+print(paste("Best K value:", best_k))
+# Define a custom summary function that prioritizes false positives
+custom_summary <- function(data, lev = NULL, model = NULL) {
+  # Extract the confusion matrix
+  cm <- confusionMatrix(data$pred, data$obs, positive = "Malignant")
+  
+  # Calculate false positives
+  fp <- cm$table[2, 1]
+  
+  # Get other metrics
+  acc <- cm$overall["Accuracy"]
+  sens <- cm$byClass["Sensitivity"]
+  spec <- cm$byClass["Specificity"]
+  
+  # Return as named vector
+  c(Accuracy = acc,
+    Sensitivity = sens,
+    Specificity = spec,
+    FalsePositives = fp)
+}
+
+# Set up train control with custom summary
+ctrl <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,
+  summaryFunction = custom_summary
+)
+
+# Train model with custom metric
+knn_model <- train(
+  x = all_features,
+  y = all_labels,
+  method = "knn",
+  trControl = ctrl,
+  tuneGrid = expand.grid(k = seq(1, 50, by = 2)),
+  metric = "Specificity"  # Optimize for specificity (which reduces false positives)
+)
+
+# View results
+print(knn_model)
+plot(knn_model)
+```
+
+```{r}
+# Load necessary libraries
+library(class)
+library(caret)
+
+# Assuming your data is already prepared with:
+# - train_x: training features
+# - test_x: testing features
+# - train_y: training labels
+# - test_y: testing labels
+
+# Create a data frame to store results
+results <- data.frame(
+  k = 1:50,  # Test K from 1 to 50
+  accuracy = NA,
+  sensitivity = NA,
+  specificity = NA,
+  false_positives = NA
+)
+
+# Loop through each K value
+for (i in 1:nrow(results)) {
+  k_value <- results$k[i]
+  
+  # Run KNN with current K value
+  predictions <- knn(
+    train = train_x,
+    test = test_x,
+    cl = train_y,
+    k = k_value
+  )
+  
+  # Calculate performance metrics
+  cm <- confusionMatrix(predictions, test_y, positive = "Malignant")
+  
+  # Store results
+  results$accuracy[i] <- cm$overall["Accuracy"]
+  results$sensitivity[i] <- cm$byClass["Sensitivity"]
+  results$specificity[i] <- cm$byClass["Specificity"]
+  results$false_positives[i] <- cm$table[2, 1]  # Predicted positive, actually negative
+}
+
+# Visualize results
+library(ggplot2)
+
+# Plot accuracy vs K
+ggplot(results, aes(x = k, y = accuracy)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Accuracy vs. K Value",
+       x = "K Value",
+       y = "Accuracy") +
+  theme_minimal()
+
+# Plot false positives vs K
+ggplot(results, aes(x = k, y = false_positives)) +
+  geom_line(color = "red") +
+  geom_point() +
+  labs(title = "False Positives vs. K Value",
+       x = "K Value",
+       y = "Number of False Positives") +
+  theme_minimal()
+```
